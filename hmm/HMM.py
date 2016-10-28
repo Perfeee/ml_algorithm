@@ -27,6 +27,39 @@ class hmm(object):
         self.A_mat = transfer_mat
         self.B_mat = confusion_mat
         self.pi_vec = initial_vector
+    
+    def _state_gen(self,current_hstate=None,state_type='h'):
+        '''
+        generate a hidden state or an observation state
+        '''
+        temp = np.random.rand(1)[0]
+        if not current_hstate:
+            trans_prob = self.pi_vec
+        elif state_type == 'h':
+            trans_prob = self.A_mat[current_hstate,:]
+        elif state_type == 'o':
+            trans_prob = self.B_mat[current_hstate,:]
+        assert np.sum(trans_prob)<=1, "trans_prob error"
+        for i in range(trans_prob.shape[0]):
+                if temp < np.sum(trans_prob[:i+1]):
+                    return i
+                else:
+                    continue
+    
+
+    def o_seq_gen(self,length):
+        '''
+        generate a observation sequence with given HMM model and length.
+        '''
+        o_seq = np.empty(length,dtype=int)
+        h_seq = np.empty(length,dtype=int)
+        h_seq[0] = self._state_gen()
+        for i in range(length):
+            o_seq[i] = self._state_gen(current_hstate=h_seq[i],state_type='o')
+            try:
+                h_seq[i+1] = self._state_gen(current_hstate=h_seq[i],state_type='h')
+            except IndexError:
+                return o_seq,h_seq
 
     def forward(self,o_seq):
         '''
@@ -45,7 +78,8 @@ class hmm(object):
         beta = np.zeros((self.hstate_length,o_seq.shape[0]),dtype=float)
         beta[:,-1] = 1.0
         for t in np.arange(beta.shape[1]-2,-1,-1):
-            beta[:,t] = np.dot(beta[:,t+1],self.A_mat)*self.B_mat[:,o_seq[t+1]]
+#            beta[:,t] = np.dot(beta[:,t+1],self.A_mat)*self.B_mat[:,o_seq[t+1]]        error expression.
+            beta[:,t] = np.dot(self.A_mat,self.B_mat[:,o_seq[t+1]]*beta[:,t+1])
         return np.sum(beta[:,0]*self.pi_vec*self.B_mat[:,o_seq[0]])
 
     def viterbi(self,o_seq):
@@ -77,6 +111,12 @@ def test_forward_backward():
     forward_prob = hmmodel.forward(np.array([0,2,3]))
     backward_prob = hmmodel.backward(np.array([0,2,3]))
     print('forward prob:',forward_prob,'backward prob:',backward_prob)
+    o_seq = hmmodel.o_seq_gen(5)[0]
+    print(o_seq)
+    f_prob = hmmodel.forward(o_seq)
+    b_prob = hmmodel.backward(o_seq)
+    print('generated o_seq\'s forward prob and backward prob:',f_prob,b_prob)
+
 
 def test_viterbi():
     A = np.array([[0.333,0.333,0.333],[0.333,0.333,0.333],[0.333,0.333,0.333]])
@@ -97,4 +137,12 @@ if __name__ == '__main__':
     hmarkovm = hmm(3,3,transfer_mat,confusion_mat,initial_vector)
     f_prob = hmarkovm.forward(np.array([0,0,2]))
     b_prob = hmarkovm.backward(np.array([0,0,2]))
+    print('The prob of given o_sequence:',f_prob,b_prob)
+    
+    transfer_mat = np.array([[0.5,0.2,0.3],[0.3,0.5,0.2],[0.2,0.3,0.5]])
+    confusion_mat = np.array([[0.5,0.5],[0.4,0.6],[0.7,0.3]])
+    initial_vector = np.array([0.2,0.4,0.4])
+    hmarkovm = hmm(3,3,transfer_mat,confusion_mat,initial_vector)
+    f_prob = hmarkovm.forward(np.array([0,1,0]))
+    b_prob = hmarkovm.backward(np.array([0,1,0]))
     print('The prob of given o_sequence:',f_prob,b_prob)
