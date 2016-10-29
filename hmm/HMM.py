@@ -9,13 +9,6 @@ Learn HMM model
 from __future__ import print_function
 import numpy as np
 
-class hmm_learning(object):
-    '''
-    use same o_sequences to learn HMM's pamameters (transfer_mat,confusion_mat,pi_vector) with forward-backward algorithm.
-    '''
-    def __init__(self,):
-        pass
-
 
 class hmm(object):
     '''
@@ -69,7 +62,7 @@ class hmm(object):
         alpha[:,0] = self.pi_vec*self.B_mat[:,o_seq[0]]
         for t in range(1,alpha.shape[1]):
             alpha[:,t] = np.dot(alpha[:,t-1],self.A_mat)*self.B_mat[:,o_seq[t]]
-        return np.sum(alpha[:,-1])
+        return np.sum(alpha[:,-1]),alpha
     
     def backward(self,o_seq):
         '''
@@ -80,10 +73,34 @@ class hmm(object):
         for t in np.arange(beta.shape[1]-2,-1,-1):
 #            beta[:,t] = np.dot(beta[:,t+1],self.A_mat)*self.B_mat[:,o_seq[t+1]]        error expression.
             beta[:,t] = np.dot(self.A_mat,self.B_mat[:,o_seq[t+1]]*beta[:,t+1])
-        return np.sum(beta[:,0]*self.pi_vec*self.B_mat[:,o_seq[0]])
+        return np.sum(beta[:,0]*self.pi_vec*self.B_mat[:,o_seq[0]]),beta
+
+    def gamma_gen(self,alpha,beta):
+        '''利用前向局部概率alpha和后向局部概率beta计算：给定模型lambda和观测序列O，在某时刻处于某状态的概率
+        return gamma  行索引为状态，列索引为t
+        '''
+        gamma = np.empty_like(alpha)
+        temp = alpha*beta
+        gamma = temp/np.sum(temp,axis=0)
+        return gamma 
+
+    def ksi_gen(self,alpha,beta,o_seq):
+        '''利用alpha和beta计算：给定模型lamda和观测序列O，在t时刻为状态i且在t+1时刻为状态j的概率，即在t时刻为i，并转移至状态j的概率
+        return ksi  是一个三维矩阵，第一维是时刻t（长度只有T-1），第二维是t时刻状态i，第三维是t+1时刻状态j
+        '''
+        ksi = np.empty((alpha.shape[1]-1,alpha.shape[0],alpha.shape[0]),dtype=float)
+        for t in range(alpha.shape[1]-1):
+            temp = alpha[:,t]*self.A_mat*self.B_mat[:,o_seq[t+1]]*beta[:,t+1]
+            ksi[t,:,:] = temp/np.sum(temp)
+        return ksi
+
+    def approxi(self,o_seq,gamma):
+        '''解决decodeing问题，近似算法，在给定lambda和o_seq的情况下，预测每个位置最可能出现的状态，即为该位置的状态。该方法简单，但是可能出现实际不可能出现的状态，比如预测的状态序列有一环的转移概率实际为0。这里的原因是因为，每个时刻隐含状态的选择，仅依赖与当前时刻最可能的状态。而不像viterbi算法，是根据整个序列最后的概率来选择的。
+        '''
+        return np.argmax(gamma,axis=0)
 
     def viterbi(self,o_seq):
-        '''
+        '''解决decoding问题，预测最优隐含序列
         o_seq是观察序列
         '''
         sigma = np.zeros((self.hstate_length,o_seq.shape[0]),dtype=float)
@@ -101,20 +118,47 @@ class hmm(object):
             h_seq[t] = path_record[h_seq[t+1],t]
         return h_seq,max_prob
 
-        
+class hmm_learning(object,hmm):
+    '''
+    use same o_sequences to learn HMM's pamameters (transfer_mat,confusion_mat,pi_vector) with forward-backward algorithm.
+    '''
+    def __init__(self,num_ostate,num_hstate,o_seq,init_trans_mat=None,init_conf_mat=None,init_pi_vec=None,):
+        '''设置初始参数，如果单观察序列，那就只能随机（针对不同的问题，可能有更好的随机方式/先验分布？）。如果是多观察序列，那么可以先拿一部分训练，得到的参数作为剩下数据的训练的初始参数。
+        '''
+        def std(mat):
+            mat = np.abs(mat)
+            mat = mat/(np.sum(mat,axis=1).reshape(mat.shape[0],1))
+            return mat
+
+        if not init_trans_mat:
+            '''使用标准正态分布来初始化参数，注意这是带条件的初始化，概率大于零，并且和为1.
+            '''
+            init_trans_mat = np.random.randn(num_hstate,num_hstate)
+            init_trans_mat = std(init_trans_mat)
+            init_conf_mat = np.random.randn(num_hstate,num_ostate)
+            init_conf_mat = std(init_conf_mat)
+            init_pi_vec = np.random.randn(num_hstate)
+            init_pi_vec = std(init_pi_vec)
+        hmm.__init__(self,num_ostate,num_hstate,init_trans_mat,init_conf_mat,init_pi_vec)
+        self.o_seq = o_seq
+    
+    def fit(self,max_iter=10,):
+        '''HMM参数学习，如果是多序列，那么采用Levinson方法，假设它们是独立的。
+        '''
+       pass 
 
 def test_forward_backward():
     A = np.array([[0.5,0.375,0.125],[0.25,0.125,0.625],[0.25,0.375,0.375]])
     B = np.array([[0.6,0.2,0.15,0.05],[0.25,0.25,0.25,0.25],[0.05,0.1,0.35,0.5]])
     pi_vec = np.array([0.63,0.17,0.2])
     hmmodel = hmm(4,3,A,B,pi_vec)
-    forward_prob = hmmodel.forward(np.array([0,2,3]))
-    backward_prob = hmmodel.backward(np.array([0,2,3]))
+    forward_prob = hmmodel.forward(np.array([0,2,3]))[0]
+    backward_prob = hmmodel.backward(np.array([0,2,3]))[1]
     print('forward prob:',forward_prob,'backward prob:',backward_prob)
     o_seq = hmmodel.o_seq_gen(5)[0]
     print(o_seq)
-    f_prob = hmmodel.forward(o_seq)
-    b_prob = hmmodel.backward(o_seq)
+    f_prob = hmmodel.forward(o_seq)[0]
+    b_prob = hmmodel.backward(o_seq)[1]
     print('generated o_seq\'s forward prob and backward prob:',f_prob,b_prob)
 
 
@@ -123,9 +167,15 @@ def test_viterbi():
     B = np.array([[0.5,0.5],[0.75,0.25],[0.25,0.75]])
     pi_vec = np.array([0.333,0.333,0.333])
     hmmodel = hmm(2,3,A,B,pi_vec)
-    h_seq,prob = hmmodel.viterbi(np.array([0,0,0,0,1,0,1,1,1,1],dtype=int))
+    o_seq = np.array([0,0,0,0,1,0,1,1,1,1],dtype=int)
+    h_seq,prob = hmmodel.viterbi(o_seq)
     log_prob = np.log(prob)
-    print('The best hidden sequence is: ',h_seq,"Prob:",prob,'log_prob:',log_prob)
+    alpha = hmmodel.forward(o_seq)[1]
+    beta = hmmodel.backward(o_seq)[1]
+    gamma = hmmodel.gamma_gen(alpha,beta)
+    ha_seq = hmmodel.approxi(o_seq,gamma)
+    print('The best hidden sequence given by viterbi is: ',h_seq,"Prob:",prob,'log_prob:',log_prob)
+    print('The best hidden sequence given by approxi is: ',ha_seq)
 
 if __name__ == '__main__':
      
@@ -135,14 +185,20 @@ if __name__ == '__main__':
     confusion_mat = np.array([[0.8,0.1,0.1],[0.2,0.7,0.1],[0.1,0.1,0.8]])
     initial_vector = np.array([0.8,0.1,0.1])
     hmarkovm = hmm(3,3,transfer_mat,confusion_mat,initial_vector)
-    f_prob = hmarkovm.forward(np.array([0,0,2]))
-    b_prob = hmarkovm.backward(np.array([0,0,2]))
+    f_prob = hmarkovm.forward(np.array([0,0,2]))[0]
+    b_prob = hmarkovm.backward(np.array([0,0,2]))[0]
     print('The prob of given o_sequence:',f_prob,b_prob)
     
     transfer_mat = np.array([[0.5,0.2,0.3],[0.3,0.5,0.2],[0.2,0.3,0.5]])
     confusion_mat = np.array([[0.5,0.5],[0.4,0.6],[0.7,0.3]])
     initial_vector = np.array([0.2,0.4,0.4])
     hmarkovm = hmm(3,3,transfer_mat,confusion_mat,initial_vector)
-    f_prob = hmarkovm.forward(np.array([0,1,0]))
-    b_prob = hmarkovm.backward(np.array([0,1,0]))
+    o_seq = np.array([0,1,0])
+    f_prob,alpha = hmarkovm.forward(o_seq)
+    b_prob,beta = hmarkovm.backward(o_seq)
     print('The prob of given o_sequence:',f_prob,b_prob)
+
+    gamma = hmarkovm.gamma_gen(alpha,beta)
+    ksi = hmarkovm.ksi_gen(alpha,beta,o_seq)
+    print('gamma:',gamma)
+    print('ksi:',ksi)
