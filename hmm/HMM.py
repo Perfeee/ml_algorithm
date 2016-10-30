@@ -118,16 +118,19 @@ class hmm(object):
             h_seq[t] = path_record[h_seq[t+1],t]
         return h_seq,max_prob
 
-class hmm_learning(object,hmm):
+class hmm_learning(hmm):
     '''
-    use same o_sequences to learn HMM's pamameters (transfer_mat,confusion_mat,pi_vector) with forward-backward algorithm.
+    use some o_sequences to learn HMM's pamameters (transfer_mat,confusion_mat,pi_vector) with forward-backward algorithm.
     '''
     def __init__(self,num_ostate,num_hstate,o_seq,init_trans_mat=None,init_conf_mat=None,init_pi_vec=None,):
         '''设置初始参数，如果单观察序列，那就只能随机（针对不同的问题，可能有更好的随机方式/先验分布？）。如果是多观察序列，那么可以先拿一部分训练，得到的参数作为剩下数据的训练的初始参数。
         '''
-        def std(mat):
+        def std(mat,axis=1):
             mat = np.abs(mat)
-            mat = mat/(np.sum(mat,axis=1).reshape(mat.shape[0],1))
+            if axis:
+                mat = mat/(np.sum(mat,axis).reshape(mat.shape[0],1))
+            else:
+                mat= mat/np.sum(mat)
             return mat
 
         if not init_trans_mat:
@@ -138,14 +141,54 @@ class hmm_learning(object,hmm):
             init_conf_mat = np.random.randn(num_hstate,num_ostate)
             init_conf_mat = std(init_conf_mat)
             init_pi_vec = np.random.randn(num_hstate)
-            init_pi_vec = std(init_pi_vec)
+            init_pi_vec = std(init_pi_vec,axis=None)
         hmm.__init__(self,num_ostate,num_hstate,init_trans_mat,init_conf_mat,init_pi_vec)
         self.o_seq = o_seq
     
     def fit(self,max_iter=10,):
         '''HMM参数学习，如果是多序列，那么采用Levinson方法，假设它们是独立的。
         '''
-       pass 
+        def row_compute(row):
+            temp = [np.sum(row[np.where(self.o_seq==o)[0]]) for o in range(self.ostate_length)]
+            assert len(temp)==self.ostate_length,'B_mat learning error.'
+            return np.array(temp)
+        def single_o_seq(o_seq):        
+            alpha = self.forward(o_seq)[1]
+            beta = self.backward(o_seq)[1]
+            gamma = self.gamma_gen(alpha,beta)
+            ksi = self.ksi_gen(alpha,beta,o_seq)
+            new_A_mat_nume = np.apply_along_axis(np.sum,0,ksi)
+            new_A_mat_deno = np.sum(gamma[:,0:-1],axis=1).reshape(self.A_mat.shape[0],1)
+            new_B_mat_nume = np.apply_along_axis(row_compute,axis=1,arr=gamma)
+            new_B_mat_deno = np.sum(gamma,axis=1).reshape(self.B_mat.shape[0],1)
+            new_pi_vec= np.empty_like(self.pi_vec)
+            new_pi_vec = gamma[:,0]
+            return new_A_mat_nume,new_A_mat_deno,new_B_mat_nume,new_B_mat_deno,new_pi_vec
+        if self.o_seq.size == self.o_seq.shape[0]:
+            '''单序列
+            '''
+            for i in range(max_iter):
+                new_A_mat_nume,new_A_mat_deno,new_B_mat_nume,new_B_mat_deno,new_pi_vec = single_o_seq(self.o_seq)
+                self.A_mat = new_A_mat_nume/new_A_mat_deno
+                self.B_mat = new_B_mat_nume/new_B_mat_deno
+                self.pi_vec = new_pi_vec
+        else:
+            for i in range(max_iter):
+                A_mat_nume = np.zeros_like(self.A_mat)
+                A_mat_deno = np.zeros((self.A_mat.shape[0],1))
+                B_mat_nume = np.zeros_like(self.B_mat)
+                B_mat_deno = np.zeros((self.B_mat.shape[0],1))
+                pi_vec = np.zeros_like(self.pi_vec)
+                for j in range(self.o_seq.shape[0]):
+                    new_A_mat_nume,new_A_mat_deno,new_B_mat_nume,new_B_mat_deno,new_pi_vec = single_o_seq(self.o_seq[j,:])
+                    A_mat_nume += new_A_mat_nume
+                    A_mat_deno += new_A_mat_deno
+                    B_mat_nume += new_B_mat_nume
+                    B_mat_deno += new_B_mat_deno
+                    pi_vec += new_pi_vec
+                self.A_mat = A_mat_nume/A_mat_deno
+                self.B_mat = B_mat_nume/B_mat_deno
+                self.pi_vec = pi_vec/self.o_seq.shape[0] 
 
 def test_forward_backward():
     A = np.array([[0.5,0.375,0.125],[0.25,0.125,0.625],[0.25,0.375,0.375]])
@@ -177,10 +220,18 @@ def test_viterbi():
     print('The best hidden sequence given by viterbi is: ',h_seq,"Prob:",prob,'log_prob:',log_prob)
     print('The best hidden sequence given by approxi is: ',ha_seq)
 
+def learning_test():
+    model = hmm_learning(3,3,np.array([0,1,2]))
+    print('fitted before:',model.A_mat,model.B_mat,model.pi_vec)
+    model.fit(max_iter=3)
+    print('aftered fitted:',model.A_mat,model.B_mat,model.pi_vec)
+
+
 if __name__ == '__main__':
      
     test_forward_backward()
     test_viterbi()
+    
     transfer_mat = np.array([[0.6,0.3,0.1],[0.2,0.5,0.3],[0.2,0.3,0.5]])
     confusion_mat = np.array([[0.8,0.1,0.1],[0.2,0.7,0.1],[0.1,0.1,0.8]])
     initial_vector = np.array([0.8,0.1,0.1])
@@ -201,4 +252,7 @@ if __name__ == '__main__':
     gamma = hmarkovm.gamma_gen(alpha,beta)
     ksi = hmarkovm.ksi_gen(alpha,beta,o_seq)
     print('gamma:',gamma)
-    print('ksi:',ksi)
+    print('ksi:',ksi,'shape:',ksi.shape)
+
+
+    learning_test()
