@@ -1,2 +1,2 @@
-/__pycache__/
-./optimize_method/__pycache__/
+.__pycache__/*
+./optimize_method/__pycache__/*
